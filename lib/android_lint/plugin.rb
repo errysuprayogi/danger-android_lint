@@ -90,6 +90,13 @@ module Danger
     # Only show messages for issues not in this list.
     attr_accessor :excluding_issue_ids
 
+    # Add correction file and put suggestion on inline file change
+    attr_accessor :correction_file
+
+    def correction_file
+      return @correction_file || 'lint-correction.json'
+    end
+
     # Calls lint task of your gradle project.
     # It fails if `gradlew` cannot be found inside current directory.
     # It fails if `severity` level is not a valid option.
@@ -117,7 +124,6 @@ module Danger
 
       issues = read_issues_from_report
       filtered_issues = filter_issues_by_severity(issues)
-
       message = ""
 
       if inline_mode
@@ -132,6 +138,14 @@ module Danger
     end
 
     private
+
+    def read_correction_file
+      if File.exists?(correction_file)
+        File.open(correction_file) do |f|
+          JSON.load(f)
+        end
+      end
+    end
 
     def read_issues_from_report
       file = File.open(report_file)
@@ -156,7 +170,7 @@ module Danger
       message = ""
 
       SEVERITY_LEVELS.reverse.each do |level|
-        filtered = issues.select{|issue| issue.get("severity") == level}
+        filtered = issues.select { |issue| issue.get("severity") == level }
         message << parse_results(filtered, level) unless filtered.empty?
       end
 
@@ -179,7 +193,7 @@ module Danger
         reason = r.get('message')
         if filtering_lines
           added_lines = parse_added_line_numbers(git.diff[filename].patch)
-          next unless added_lines.include? line
+          next unless added_lines.keys.include? line
         end
         count = count + 1
         message << "`#{filename}` | #{line} | #{reason} \n"
@@ -194,26 +208,35 @@ module Danger
       message
     end
 
-
     # Send inline comment with danger's warn or fail method
     #
     # @return [void]
     def send_inline_comment(issues)
       target_files = (git.modified_files - git.deleted_files) + git.added_files
       dir = "#{Dir.pwd}/"
+      correction = read_correction_file
       SEVERITY_LEVELS.reverse.each do |level|
-        filtered = issues.select{|issue| issue.get("severity") == level}
+        filtered = issues.select { |issue| issue.get("severity") == level }
         next if filtered.empty?
         filtered.each do |r|
           location = r.xpath('location').first
           filename = location.get('file').gsub(dir, "")
+          id = r.get("id")
           next unless (!filtering && !filtering_lines) || (target_files.include? filename)
           line = (location.get('line') || "0").to_i
           if filtering_lines
             added_lines = parse_added_line_numbers(git.diff[filename].patch)
-            next unless added_lines.include? line
+            next unless added_lines.keys.include? line
           end
-          send(level === "Warning" ? "warn" : "fail", r.get('message'), file: filename, line: line)
+          comment = nil
+          unless correction.nil?
+            correction.each do |result|
+              next unless id == result['issue_id'] and added_lines.keys.include? line
+              next unless File.extname(filename).eql?(result["ext"])
+              comment = "#{added_lines.fetch(line).gsub(result["target_error"], result["correction"])}"
+            end
+          end
+          send(level === "Warning" ? "warn" : "fail", r.get('message'), file: filename, line: line, comment: comment)
         end
       end
     end
@@ -221,7 +244,7 @@ module Danger
     # Parses git diff of a file and retuns an array of added line numbers.
     def parse_added_line_numbers(diff)
       current_line_number = nil
-      added_line_numbers = []
+      added_line = Hash.new
       diff_lines = diff.strip.split("\n")
       diff_lines.each_with_index do |line, index|
         if m = /\+(\d+)(?:,\d+)? @@/.match(line)
@@ -231,7 +254,7 @@ module Danger
           if !current_line_number.nil?
             if line.start_with?('+')
               # added line
-              added_line_numbers.push current_line_number
+              added_line[current_line_number] = line[1..line.length]
               current_line_number += 1
             elsif !line.start_with?('-')
               # unmodified line
@@ -240,7 +263,7 @@ module Danger
           end
         end
       end
-      added_line_numbers
+      added_line
     end
 
     def gradlew_exists?
