@@ -249,7 +249,7 @@ module Danger
       diff_lines.each_with_index do |line, index|
         if m = /\+(\d+)(?:,\d+)? @@/.match(line)
           # (e.g. @@ -32,10 +32,7 @@)
-          current_line_number = Integer(m[1])
+          current_line_number = Integer(m[1], 10)
         else
           if !current_line_number.nil?
             if line.start_with?('+')
