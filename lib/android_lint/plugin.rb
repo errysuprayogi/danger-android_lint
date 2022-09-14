@@ -233,12 +233,26 @@ module Danger
             correction.each do |result|
               next unless id == result['issue_id'] and added_lines.keys.include? line
               next unless File.extname(filename).eql?(result["ext"])
+              next unless check_required_import(filename, id)
               comment = "#{added_lines.fetch(line).gsub(result["target_error"], result["correction"])}"
             end
           end
           send(level === "Warning" ? "warn" : "fail", r.get('message'), file: filename, line: line, comment: comment)
         end
       end
+    end
+
+    def check_required_import(filename, id)
+      file_path = "#{Dir.pwd}/#{filename}"
+      required_import = read_correction_file.select { |res| res["issue_id"] == id }.first["required_import"]
+      import_exist = false
+      if required_import
+        File.readlines(file_path).each do |line|
+          next if import_exist
+          import_exist = line.strip.eql? required_import
+        end
+      end
+      import_exist
     end
 
     # Parses git diff of a file and retuns an array of added line numbers.
