@@ -251,6 +251,8 @@ module Danger
           next if import_exist
           import_exist = line.strip.eql? required_import
         end
+      else
+        import_exist = true
       end
       import_exist
     end
